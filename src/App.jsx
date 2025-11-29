@@ -4,8 +4,13 @@ import { detectObjects } from './utils/gemini';
 import Overlay from './components/Overlay';
 import './App.css'; // We can keep this empty or remove it, but Vite creates it.
 
+import LiveDemo from './components/LiveDemo';
+
 function App() {
   const [apiKey, setApiKey] = useState('');
+  const [activeTab, setActiveTab] = useState('robotics'); // 'robotics' or 'live'
+
+  // Robotics State
   const [isScanning, setIsScanning] = useState(false);
   const [predictions, setPredictions] = useState([]);
   const webcamRef = useRef(null);
@@ -36,6 +41,16 @@ function App() {
       loopCapture();
     }
   }, [isScanning]);
+
+  // We need to ensure loopCapture doesn't run if tab is not robotics, 
+  // but isScanning check handles that logic mostly. 
+  // Ideally, switching tabs should pause scanning.
+  useEffect(() => {
+    if (activeTab !== 'robotics') {
+      setIsScanning(false);
+      isScanningRef.current = false;
+    }
+  }, [activeTab]);
 
   const loopCapture = async () => {
     if (!isScanningRef.current || !webcamRef.current || !apiKey) return;
@@ -103,57 +118,87 @@ function App() {
 
   return (
     <div className="App">
-      <h1>Gemini Robotics Demo</h1>
-      <div className="card">
-        <div style={{ marginBottom: '20px' }}>
-          <input
-            type="password"
-            placeholder="Enter Gemini API Key"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            disabled={isScanning}
-          />
-          <button onClick={handleStartStop}>
-            {isScanning ? 'Stop Scanning' : 'Start Scanning'}
-          </button>
-          <button onClick={toggleCamera} style={{ marginLeft: '10px' }}>
-            Switch Camera
-          </button>
-        </div>
+      <h1>Gemini Robotics & Live Demo</h1>
 
-        <div className="webcam-container">
-          <Webcam
-            audio={false}
-            ref={webcamRef}
-            screenshotFormat="image/jpeg"
-            videoConstraints={{
-              width: 1280,
-              height: 720,
-              facingMode: facingMode
-            }}
-            className="webcam-video"
-            onUserMedia={handleUserMedia}
-          />
-          <Overlay
-            predictions={predictions}
-            width={webcamRef.current?.video?.clientWidth || 640}
-            height={webcamRef.current?.video?.clientHeight || 480}
-          />
-        </div>
-
-        <p style={{ marginTop: '20px', color: '#888' }}>
-          {isScanning ? "Scanning... (Realtime)" : "Ready to scan"}
-        </p>
-
-        {/* Debug Info */}
-        <div style={{ marginTop: '20px', textAlign: 'left', background: '#333', padding: '10px', borderRadius: '8px', fontSize: '12px' }}>
-          <h3 style={{ margin: '0 0 10px 0' }}>Debug Info</h3>
-          <div><strong>Predictions:</strong> {predictions.length}</div>
-          {predictions.length > 0 && (
-            <pre style={{ overflowX: 'auto' }}>{JSON.stringify(predictions[0], null, 2)} ...</pre>
-          )}
-        </div>
+      <div style={{ marginBottom: '20px' }}>
+        <button
+          onClick={() => setActiveTab('robotics')}
+          style={{
+            marginRight: '10px',
+            background: activeTab === 'robotics' ? '#646cff' : '#1a1a1a'
+          }}
+        >
+          Robotics (Vision)
+        </button>
+        <button
+          onClick={() => setActiveTab('live')}
+          style={{
+            background: activeTab === 'live' ? '#646cff' : '#1a1a1a'
+          }}
+        >
+          Live API (Audio)
+        </button>
       </div>
+
+      <div style={{ marginBottom: '20px' }}>
+        <input
+          type="password"
+          placeholder="Enter Gemini API Key"
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          style={{ width: '100%', maxWidth: '400px' }}
+        />
+      </div>
+
+      {activeTab === 'robotics' && (
+        <div className="card">
+          <div style={{ marginBottom: '20px' }}>
+            <button onClick={handleStartStop}>
+              {isScanning ? 'Stop Scanning' : 'Start Scanning'}
+            </button>
+            <button onClick={toggleCamera} style={{ marginLeft: '10px' }}>
+              Switch Camera
+            </button>
+          </div>
+
+          <div className="webcam-container">
+            <Webcam
+              audio={false}
+              ref={webcamRef}
+              screenshotFormat="image/jpeg"
+              videoConstraints={{
+                width: 1280,
+                height: 720,
+                facingMode: facingMode
+              }}
+              className="webcam-video"
+              onUserMedia={handleUserMedia}
+            />
+            <Overlay
+              predictions={predictions}
+              width={webcamRef.current?.video?.clientWidth || 640}
+              height={webcamRef.current?.video?.clientHeight || 480}
+            />
+          </div>
+
+          <p style={{ marginTop: '20px', color: '#888' }}>
+            {isScanning ? "Scanning... (Realtime)" : "Ready to scan"}
+          </p>
+
+          {/* Debug Info */}
+          <div style={{ marginTop: '20px', textAlign: 'left', background: '#333', padding: '10px', borderRadius: '8px', fontSize: '12px' }}>
+            <h3 style={{ margin: '0 0 10px 0' }}>Debug Info</h3>
+            <div><strong>Predictions:</strong> {predictions.length}</div>
+            {predictions.length > 0 && (
+              <pre style={{ overflowX: 'auto' }}>{JSON.stringify(predictions[0], null, 2)} ...</pre>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'live' && (
+        <LiveDemo apiKey={apiKey} />
+      )}
     </div>
   );
 }
