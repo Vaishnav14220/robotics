@@ -65,13 +65,41 @@ export class LiveAPIClient {
                 model: `models/${model}`,
                 generationConfig: {
                     responseModalities: ["AUDIO"]
-                }
+                },
+                systemInstruction: {
+                    parts: [
+                        {
+                            text: "You are a helpful assistant with access to a robotics arm. You can see the user's video feed. If the user asks to move an object or plan a path, use the 'plan_trajectory' tool to visualize it. Do not refuse to plan a trajectory if you see the object."
+                        }
+                    ]
+                },
+                tools: [
+                    {
+                        functionDeclarations: [
+                            {
+                                name: "plan_trajectory",
+                                description: "Plan a robot trajectory path from an object to a destination.",
+                                parameters: {
+                                    type: "OBJECT",
+                                    properties: {
+                                        object: { type: "STRING", description: "The object to move (e.g., 'red cup')." },
+                                        destination: { type: "STRING", description: "Where to move it (e.g., 'table edge')." }
+                                    },
+                                    required: ["object", "destination"]
+                                }
+                            }
+                        ]
+                    }
+                ]
             }
         };
         this.ws.send(JSON.stringify(setupMessage));
     }
 
     handleResponse(response) {
+        if (response.toolUse) {
+            this.onResponse({ toolUse: response.toolUse });
+        }
         if (response.serverContent) {
             if (response.serverContent.modelTurn) {
                 const parts = response.serverContent.modelTurn.parts;
@@ -85,6 +113,21 @@ export class LiveAPIClient {
                 }
             }
         }
+    }
+
+    sendToolResponse(toolUseId, name, result) {
+        const msg = {
+            toolResponse: {
+                functionResponses: [
+                    {
+                        id: toolUseId,
+                        name: name,
+                        response: { result: result }
+                    }
+                ]
+            }
+        };
+        this.ws.send(JSON.stringify(msg));
     }
 
     async startAudioStream() {

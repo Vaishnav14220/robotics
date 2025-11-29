@@ -1,8 +1,7 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import Webcam from 'react-webcam';
 import { LiveAPIClient } from '../utils/live-api';
-import { detectObjects } from '../utils/gemini'; // Reuse the robotics logic
+import { detectObjects, detectTrajectory } from '../utils/gemini'; // Reuse the robotics logic
 import Overlay from './Overlay';
 
 const LiveDemo = ({ apiKey }) => {
@@ -11,6 +10,9 @@ const LiveDemo = ({ apiKey }) => {
     const [logs, setLogs] = useState([]);
     const [videoEnabled, setVideoEnabled] = useState(false);
     const [predictions, setPredictions] = useState([]); // For object labels
+    const [trajectory, setTrajectory] = useState([]); // For trajectory path
+    const [targetObject, setTargetObject] = useState(null); // Name of the object to move
+    const trajectoryRef = useRef([]); // Ref to avoid stale closures in interval
 
     const clientRef = useRef(null);
     const webcamRef = useRef(null);
@@ -55,7 +57,13 @@ const LiveDemo = ({ apiKey }) => {
             try {
                 // We use the same detectObjects function!
                 const results = await detectObjects(base64, apiKey);
-                setPredictions(results);
+                setPredictions(prev => {
+                    // Merge trajectory from ref
+                    if (trajectoryRef.current.length > 0) {
+                        return { objects: results, trajectory: trajectoryRef.current };
+                    }
+                    return results;
+                });
             } catch (e) {
                 console.error("Detection error in Live Demo:", e);
             }
@@ -72,6 +80,9 @@ const LiveDemo = ({ apiKey }) => {
             detectionIntervalRef.current = null;
         }
         setPredictions([]);
+        setTrajectory([]);
+        trajectoryRef.current = [];
+        setTargetObject(null);
     };
 
     useEffect(() => {
@@ -82,6 +93,48 @@ const LiveDemo = ({ apiKey }) => {
         }
         return () => stopVideoLoop();
     }, [connected, videoEnabled]);
+
+    const handleToolCall = async (toolUse) => {
+        const functionCall = toolUse.functionCalls[0];
+        const name = functionCall.name;
+        const args = functionCall.args;
+        const id = functionCall.id;
+
+        addLog(`Tool Call: ${name}`);
+
+        if (name === "plan_trajectory") {
+            const { object, destination } = args;
+            addLog(`Planning: ${object} -> ${destination}`);
+            setTargetObject(object);
+
+            // Capture current frame for trajectory planning
+            if (webcamRef.current) {
+                const imageSrc = webcamRef.current.getScreenshot();
+                if (imageSrc) {
+                    const base64 = imageSrc.split(',')[1];
+                    const prompt = `Plan a trajectory to move the ${object} to the ${destination}.`;
+
+                    try {
+                        const points = await detectTrajectory(base64, prompt, apiKey);
+                        setTrajectory(points);
+                        trajectoryRef.current = points; // Update ref
+
+                        // Update predictions immediately to show trajectory
+                        setPredictions(prev => {
+                            const currentObjects = Array.isArray(prev) ? prev : (prev.objects || []);
+                            return { objects: currentObjects, trajectory: points };
+                        });
+
+                        clientRef.current.sendToolResponse(id, name, { result: "Trajectory visualized on screen." });
+                        addLog("Trajectory visualized!");
+                    } catch (e) {
+                        console.error("Trajectory error:", e);
+                        clientRef.current.sendToolResponse(id, name, { result: "Failed to plan trajectory." });
+                    }
+                }
+            }
+        }
+    };
 
     const handleConnect = async () => {
         if (!apiKey) {
@@ -122,6 +175,9 @@ const LiveDemo = ({ apiKey }) => {
         client.onResponse = (data) => {
             if (data.text) {
                 addLog("Gemini: " + data.text);
+            }
+            if (data.toolUse) {
+                handleToolCall(data.toolUse);
             }
         };
 
@@ -168,6 +224,52 @@ const LiveDemo = ({ apiKey }) => {
                 </span>
             </div>
 
+            {/* Preset Scenarios */}
+            <div style={{ marginBottom: '20px' }}>
+                <span style={{ marginRight: '10px', color: '#aaa', fontSize: '0.9em' }}>Presets:</span>
+                <button
+                    onClick={() => handleToolCall({
+                        functionCalls: [{
+                            name: "plan_trajectory",
+                            args: { object: "smartphone", destination: "pillow" },
+                            id: "manual-trigger"
+                        }]
+                    })}
+                    disabled={!videoEnabled}
+                    style={{
+                        backgroundColor: '#333',
+                        color: videoEnabled ? 'white' : '#666',
+                        border: '1px solid #555',
+                        padding: '5px 10px',
+                        fontSize: '0.8em',
+                        marginRight: '5px',
+                        cursor: videoEnabled ? 'pointer' : 'not-allowed'
+                    }}
+                >
+                    📱 Phone → 🛏️ Pillow
+                </button>
+                <button
+                    onClick={() => handleToolCall({
+                        functionCalls: [{
+                            name: "plan_trajectory",
+                            args: { object: "cup", destination: "table edge" },
+                            id: "manual-trigger"
+                        }]
+                    })}
+                    disabled={!videoEnabled}
+                    style={{
+                        backgroundColor: '#333',
+                        color: videoEnabled ? 'white' : '#666',
+                        border: '1px solid #555',
+                        padding: '5px 10px',
+                        fontSize: '0.8em',
+                        cursor: videoEnabled ? 'pointer' : 'not-allowed'
+                    }}
+                >
+                    ☕ Cup → 📏 Edge
+                </button>
+            </div>
+
             {/* Video Preview with Overlay */}
             <div style={{ marginBottom: '20px', display: videoEnabled ? 'block' : 'none', position: 'relative' }}>
                 <div style={{ position: 'relative', display: 'inline-block' }}>
@@ -188,6 +290,7 @@ const LiveDemo = ({ apiKey }) => {
                         predictions={predictions}
                         width={640}
                         height={480}
+                        targetObject={targetObject}
                     />
                 </div>
             </div>
@@ -213,4 +316,3 @@ const LiveDemo = ({ apiKey }) => {
 };
 
 export default LiveDemo;
-

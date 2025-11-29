@@ -1,6 +1,6 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const MODEL_NAME = "gemini-robotics-er-1.5-preview"; // Using the specific robotics model as requested
+const MODEL_NAME = "gemini-robotics-er-1.5-preview";
 
 /**
  * Detects objects in an image using the Gemini API.
@@ -36,7 +36,45 @@ export async function detectObjects(imageBase64, apiKey) {
 
         return JSON.parse(jsonString);
     } catch (error) {
-        console.error("Error detecting objects:", error);
-        throw error;
+        console.error("Gemini API Error:", error);
+        return [];
+    }
+}
+
+export async function detectTrajectory(base64Image, promptText, apiKey) {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-robotics-er-1.5-preview" });
+
+    const fullPrompt = `
+    ${promptText}
+    The answer should follow the json format: [{"point": [y, x], "label": "label"}]. 
+    The points are in [y, x] format normalized to 0-1000.
+    Return a list of points representing the trajectory.
+    `;
+
+    try {
+        const result = await model.generateContent([
+            fullPrompt,
+            {
+                inlineData: {
+                    data: base64Image,
+                    mimeType: "image/jpeg",
+                },
+            },
+        ]);
+
+        const response = await result.response;
+        const text = response.text();
+        console.log("Raw Gemini Trajectory response:", text);
+
+        const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+            const jsonStr = jsonMatch[1] || jsonMatch[0];
+            return JSON.parse(jsonStr);
+        }
+        return [];
+    } catch (error) {
+        console.error("Gemini Trajectory Error:", error);
+        return [];
     }
 }
