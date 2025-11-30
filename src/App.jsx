@@ -22,41 +22,59 @@ function App() {
   const [videoSize, setVideoSize] = useState({ width: 640, height: 480 });
   const [facingMode, setFacingMode] = useState("environment");
 
+  // Optimization Refs
+  const captureCanvasRef = useRef(null);
+  const captureContextRef = useRef(null);
+  const lastCaptureTimeRef = useRef(0);
+  const GEMINI_FPS = 2; // Limit Gemini API calls to 2 FPS
+  const GEMINI_INTERVAL = 1000 / GEMINI_FPS;
+
   // Ref to track scanning state inside the async function without dependency issues
   const isScanningRef = useRef(false);
 
-  useEffect(() => {
-    isScanningRef.current = isScanning;
-    if (isScanning) {
-      loopCapture();
-    }
-  }, [isScanning]);
+  // We use a ref to hold the loop function to break cyclic dependency
+  const loopCaptureRef = useRef(null);
 
-  useEffect(() => {
-    if (activeTab !== 'robotics') {
-      setIsScanning(false);
-      isScanningRef.current = false;
-    }
-  }, [activeTab]);
-
-  const loopCapture = async () => {
+  const loopCapture = useCallback(async () => {
     if (!isScanningRef.current || !webcamRef.current || !apiKey) return;
 
-    const video = webcamRef.current.video;
-    if (!video || video.readyState !== 4) {
-      requestAnimationFrame(loopCapture);
+    const currentTime = performance.now();
+    const timeSinceLastCapture = currentTime - lastCaptureTimeRef.current;
+
+    // Throttle Gemini API calls
+    if (timeSinceLastCapture < GEMINI_INTERVAL) {
+      if (loopCaptureRef.current) requestAnimationFrame(loopCaptureRef.current);
       return;
     }
 
-    const canvas = document.createElement('canvas');
-    const scale = 512 / video.videoWidth;
-    canvas.width = 512;
-    canvas.height = video.videoHeight * scale;
+    const video = webcamRef.current.video;
+    if (!video || video.readyState !== 4) {
+      if (loopCaptureRef.current) requestAnimationFrame(loopCaptureRef.current);
+      return;
+    }
 
-    const ctx = canvas.getContext('2d');
+    // Reuse canvas and context
+    if (!captureCanvasRef.current) {
+      captureCanvasRef.current = document.createElement('canvas');
+      captureCanvasRef.current.width = 512;
+      captureContextRef.current = captureCanvasRef.current.getContext('2d', { willReadFrequently: true });
+    }
+
+    const canvas = captureCanvasRef.current;
+    const ctx = captureContextRef.current;
+
+    // Update height if aspect ratio changes (though width is fixed to 512)
+    const scale = 512 / video.videoWidth;
+    const targetHeight = video.videoHeight * scale;
+    if (canvas.height !== targetHeight) {
+       canvas.height = targetHeight;
+    }
+
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    const base64Image = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+    const base64Image = canvas.toDataURL('image/jpeg', 0.6).split(',')[1]; // Lower quality slightly for speed
+
+    lastCaptureTimeRef.current = currentTime;
 
     try {
       const results = await detectObjects(base64Image, apiKey);
@@ -66,10 +84,33 @@ function App() {
       console.error("Detection failed:", error);
     }
 
-    if (isScanningRef.current) {
-      requestAnimationFrame(loopCapture);
+    if (isScanningRef.current && loopCaptureRef.current) {
+      requestAnimationFrame(loopCaptureRef.current);
     }
+  }, [apiKey, GEMINI_INTERVAL]);
+
+  // Update the ref when loopCapture changes
+  useEffect(() => {
+    loopCaptureRef.current = loopCapture;
+  }, [loopCapture]);
+
+
+  useEffect(() => {
+    isScanningRef.current = isScanning;
+    if (isScanning && loopCaptureRef.current) {
+      loopCaptureRef.current();
+    }
+  }, [isScanning]); // removed loopCapture from deps because we use ref
+
+  // Moved setIsScanning out of effect to tab change handler
+  const handleTabChange = (tab) => {
+      setActiveTab(tab);
+      if (tab !== 'robotics') {
+          setIsScanning(false);
+          isScanningRef.current = false;
+      }
   };
+
 
   const toggleCamera = () => {
     setFacingMode(prev => prev === "user" ? "environment" : "user");
@@ -98,11 +139,9 @@ function App() {
       if (!results) {
         // Only update if we actually have handLandmarks to remove
         if (!prev.handLandmarks) return prev;
-        const { handLandmarks, ...rest } = prev;
+        const { handLandmarks, ...rest } = prev; // eslint-disable-line no-unused-vars
         return rest;
       }
-      // Avoid update if results haven't changed (deep check is expensive, but we can check if it's the same object reference or simple length check if needed, 
-      // but usually MediaPipe returns new objects. React state update batching helps, but useCallback is key for the useEffect dependency in child).
       return { ...prev, handLandmarks: results.landmarks };
     });
   }, []);
@@ -111,7 +150,7 @@ function App() {
     setPredictions(prev => {
       if (!results) {
         if (!prev.mediaPipeObjects) return prev;
-        const { mediaPipeObjects, ...rest } = prev;
+        const { mediaPipeObjects, ...rest } = prev; // eslint-disable-line no-unused-vars
         return rest;
       }
       return { ...prev, mediaPipeObjects: results.detections };
@@ -124,7 +163,7 @@ function App() {
 
       <div style={{ marginBottom: '20px' }}>
         <button
-          onClick={() => setActiveTab('robotics')}
+          onClick={() => handleTabChange('robotics')}
           style={{
             marginRight: '10px',
             background: activeTab === 'robotics' ? '#646cff' : '#1a1a1a'
@@ -133,7 +172,7 @@ function App() {
           Robotics (Vision)
         </button>
         <button
-          onClick={() => setActiveTab('live')}
+          onClick={() => handleTabChange('live')}
           style={{
             background: activeTab === 'live' ? '#646cff' : '#1a1a1a'
           }}
