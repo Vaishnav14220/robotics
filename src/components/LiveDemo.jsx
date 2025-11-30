@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Webcam from 'react-webcam';
 import { LiveAPIClient } from '../utils/live-api';
 import { detectObjects, detectTrajectory } from '../utils/gemini'; // Reuse the robotics logic
@@ -10,7 +10,6 @@ const LiveDemo = ({ apiKey }) => {
     const [logs, setLogs] = useState([]);
     const [videoEnabled, setVideoEnabled] = useState(false);
     const [predictions, setPredictions] = useState([]); // For object labels
-    const [trajectory, setTrajectory] = useState([]); // For trajectory path
     const [targetObject, setTargetObject] = useState(null); // Name of the object to move
     const trajectoryRef = useRef([]); // Ref to avoid stale closures in interval
 
@@ -23,9 +22,19 @@ const LiveDemo = ({ apiKey }) => {
         setLogs(prev => [...prev.slice(-9), msg]); // Keep last 10 logs
     };
 
-    const startVideoLoop = () => {
-        if (videoIntervalRef.current) clearInterval(videoIntervalRef.current);
-        if (detectionIntervalRef.current) clearInterval(detectionIntervalRef.current);
+    const stopVideoLoop = useCallback(() => {
+        if (videoIntervalRef.current) {
+            clearInterval(videoIntervalRef.current);
+            videoIntervalRef.current = null;
+        }
+        if (detectionIntervalRef.current) {
+            clearInterval(detectionIntervalRef.current);
+            detectionIntervalRef.current = null;
+        }
+    }, []);
+
+    const startVideoLoop = useCallback(() => {
+        stopVideoLoop(); // Ensure clean start (clear intervals)
 
         // 1. Send frames to Live API (for Audio context) - 5 FPS
         videoIntervalRef.current = setInterval(() => {
@@ -57,8 +66,7 @@ const LiveDemo = ({ apiKey }) => {
             try {
                 // We use the same detectObjects function!
                 const results = await detectObjects(base64, apiKey);
-                setPredictions(prev => {
-                    // Merge trajectory from ref
+                setPredictions(() => {
                     if (trajectoryRef.current.length > 0) {
                         return { objects: results, trajectory: trajectoryRef.current };
                     }
@@ -68,31 +76,26 @@ const LiveDemo = ({ apiKey }) => {
                 console.error("Detection error in Live Demo:", e);
             }
         }, 500);
-    };
-
-    const stopVideoLoop = () => {
-        if (videoIntervalRef.current) {
-            clearInterval(videoIntervalRef.current);
-            videoIntervalRef.current = null;
-        }
-        if (detectionIntervalRef.current) {
-            clearInterval(detectionIntervalRef.current);
-            detectionIntervalRef.current = null;
-        }
-        setPredictions([]);
-        setTrajectory([]);
-        trajectoryRef.current = [];
-        setTargetObject(null);
-    };
+    }, [apiKey, stopVideoLoop]);
 
     useEffect(() => {
         if (connected && videoEnabled) {
             startVideoLoop();
-        } else {
-            stopVideoLoop();
         }
-        return () => stopVideoLoop();
-    }, [connected, videoEnabled]);
+
+        // Return cleanup function
+        return () => {
+             stopVideoLoop();
+        };
+    }, [connected, videoEnabled, startVideoLoop, stopVideoLoop]);
+
+    // Handle clearing state when disconnecting or disabling video
+    const clearState = () => {
+        setPredictions([]);
+        setTargetObject(null);
+        trajectoryRef.current = [];
+    };
+
 
     const handleToolCall = async (toolUse) => {
         const functionCall = toolUse.functionCalls[0];
@@ -116,7 +119,6 @@ const LiveDemo = ({ apiKey }) => {
 
                     try {
                         const points = await detectTrajectory(base64, prompt, apiKey);
-                        setTrajectory(points);
                         trajectoryRef.current = points; // Update ref
 
                         // Update predictions immediately to show trajectory
@@ -149,6 +151,7 @@ const LiveDemo = ({ apiKey }) => {
             }
             setConnected(false);
             setVideoEnabled(false);
+            clearState();
             return;
         }
 
@@ -169,6 +172,7 @@ const LiveDemo = ({ apiKey }) => {
             } else if (newStatus === "disconnected") {
                 setConnected(false);
                 addLog("Disconnected");
+                clearState();
             }
         };
 
@@ -185,6 +189,14 @@ const LiveDemo = ({ apiKey }) => {
             await client.connect();
         } catch (e) {
             addLog("Connection failed: " + e.message);
+        }
+    };
+
+    const toggleVideo = () => {
+        const newState = !videoEnabled;
+        setVideoEnabled(newState);
+        if (!newState) {
+            clearState();
         }
     };
 
@@ -208,7 +220,7 @@ const LiveDemo = ({ apiKey }) => {
                 </button>
 
                 <button
-                    onClick={() => setVideoEnabled(!videoEnabled)}
+                    onClick={toggleVideo}
                     disabled={!connected}
                     style={{
                         backgroundColor: videoEnabled ? '#44ff44' : '#555',

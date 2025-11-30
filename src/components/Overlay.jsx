@@ -4,25 +4,7 @@ const Overlay = ({ predictions, width, height, targetObject, staticTrajectory })
     const canvasRef = useRef(null);
     const animationRef = useRef(0);
 
-    // Helper to calculate distance between two points
-    const getDistance = (p1, p2) => {
-        return Math.sqrt(Math.pow(p1[0] - p2[0], 2) + Math.pow(p1[1] - p2[1], 2));
-    };
-
-    // Helper to draw an arrowhead
-    const drawArrowhead = (ctx, x, y, angle, size = 10, color = '#39ff14') => {
-        ctx.save();
-        ctx.translate(x, y);
-        ctx.rotate(angle);
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.lineTo(-size, size / 2);
-        ctx.lineTo(-size, -size / 2);
-        ctx.closePath();
-        ctx.fillStyle = color;
-        ctx.fill();
-        ctx.restore();
-    };
+    // Removed unused helper functions getDistance and drawArrowhead
 
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -35,16 +17,7 @@ const Overlay = ({ predictions, width, height, targetObject, staticTrajectory })
             // Update animation offset
             animationRef.current = (animationRef.current + 2) % 100; // Speed of flow
 
-            // Determine which trajectory to use
-            let trajectoryPoints = [];
-            if (staticTrajectory && staticTrajectory.length > 0) {
-                trajectoryPoints = staticTrajectory;
-            } else if (predictions.trajectory && predictions.trajectory.length > 0) {
-                trajectoryPoints = predictions.trajectory;
-            }
-
-            // 1. Draw Trajectory - REMOVED as per user request
-            // if (trajectoryPoints.length > 0) { ... }
+            // Removed unused trajectoryPoints logic since it wasn't being used in the drawing
 
             // 2. Draw Object Labels (Standard)
             const objects = Array.isArray(predictions) ? predictions : (predictions.objects || []);
@@ -111,10 +84,6 @@ const Overlay = ({ predictions, width, height, targetObject, staticTrajectory })
                     const label = `${category.categoryName} ${(category.score * 100).toFixed(1)}%`;
 
                     // Draw bounding box
-                    // MediaPipe returns pixel coordinates, so we use them directly.
-                    // If they were normalized (0-1), we would multiply by width/height.
-                    // We can check if they are small (< 1.0) to be safe, but usually they are pixels.
-
                     const x = originX;
                     const y = originY;
                     const w = boxWidth;
